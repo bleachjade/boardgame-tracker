@@ -7,6 +7,8 @@
     <title>BoardGame Tracker | Collection Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Added PapaParse for reliable CSV Parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
@@ -297,7 +299,7 @@
 
             <!-- Search View -->
             <div id="view-search" class="view-section hidden slide-up">
-                <h1 class="text-2xl font-bold text-slate-900 mb-2">Search BoardGameGeek</h1>
+                <h1 class="text-2xl font-bold text-slate-900 mb-2">Search Local Database</h1>
                 <p class="text-slate-500 mb-8">Find games to add to your collection or wishlist.</p>
 
                 <div class="relative max-w-2xl w-full mb-8">
@@ -309,7 +311,7 @@
                 <div id="search-loading" class="hidden text-center py-12">
                     <div class="loader w-8 h-8 border-4 border-slate-200 border-t-indigo-600 rounded-full mx-auto mb-4">
                     </div>
-                    <p class="text-slate-500">Searching BGG database...</p>
+                    <p class="text-slate-500">Searching CSV database...</p>
                 </div>
 
                 <div id="search-results" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -828,46 +830,77 @@
         };
 
         // ==========================================
-        // 5. BOARD GAME GEEK API
+        // 5. BOARD GAME DATA (Local CSV Parsing)
         // ==========================================
         const BGG = {
-            search: async (query) => {
+            _cachedData: null,
+            loadCSV: async () => {
+                // Return cached data immediately if we've already parsed the CSV
+                if (BGG._cachedData) return BGG._cachedData;
+
                 try {
-                    // Step 1: Search API (Gets IDs)
-                    const res = await fetch(`https://corsproxy.io/?url=https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`);
-                    const text = await res.text();
-                    const parser = new DOMParser();
-                    const xml = parser.parseFromString(text, 'text/xml');
+                    const res = await fetch('./boardgames_ranks.csv');
+                    if (!res.ok) throw new Error("Could not load local boardgames_ranks.csv");
+                    const csvText = await res.text();
 
-                    const items = Array.from(xml.querySelectorAll('item')).slice(0, 15); // Max 15 to avoid huge second payload
-                    if (items.length === 0) return [];
+                    return new Promise((resolve, reject) => {
+                        Papa.parse(csvText, {
+                            header: false, // Changed to false to read data by column index
+                            skipEmptyLines: true,
+                            complete: function (results) {
+                                let rows = results.data;
 
-                    const ids = items.map(item => item.getAttribute('id')).join(',');
+                                // Safely ignore the first row if it happens to be a text header (e.g. ID isn't a number)
+                                if (rows.length > 0 && isNaN(parseInt(rows[0][0]))) {
+                                    rows.shift();
+                                }
 
-                    // Step 2: Thing API (Gets Images and Stats)
-                    const detailsRes = await fetch(`https://corsproxy.io/?url=https://boardgamegeek.com/xmlapi2/thing?id=${ids}`);
-                    const detailsText = await detailsRes.text();
-                    const detailsXml = parser.parseFromString(detailsText, 'text/xml');
-                    const detailItems = Array.from(detailsXml.querySelectorAll('item'));
+                                const mappedData = rows.map((row, index) => {
+                                    const gameName = row[1] || 'Unknown Game';
+                                    return {
+                                        id: row[0] || String(index),                   // Column 0: ID
+                                        name: gameName,                                // Column 1: Name
+                                        // The provided CSV doesn't have images, so we use a dynamic placeholder
+                                        image: `https://via.placeholder.com/300x300.png?text=${encodeURIComponent(gameName.substring(0, 20))}`,
+                                        year: row[2] || 'N/A',                         // Column 2: Year
+                                        // CSV lacks player counts and time, providing safe defaults
+                                        minPlayers: '?',
+                                        maxPlayers: '?',
+                                        playTime: '?',
+                                        description: 'No description available in this dataset.',
+                                        // Column 5 is Average Rating, Column 4 is Bayes Average
+                                        rating: row[5] || row[4] || '0'
+                                    };
+                                });
 
-                    return detailItems.map(item => {
-                        return {
-                            id: item.getAttribute('id'),
-                            name: item.querySelector('name[type="primary"]')?.getAttribute('value') || 'Unknown',
-                            image: item.querySelector('image')?.textContent || 'https://via.placeholder.com/150x150.png?text=No+Cover',
-                            year: item.querySelector('yearpublished')?.getAttribute('value') || 'N/A',
-                            minPlayers: item.querySelector('minplayers')?.getAttribute('value') || '?',
-                            maxPlayers: item.querySelector('maxplayers')?.getAttribute('value') || '?',
-                            playTime: item.querySelector('playingtime')?.getAttribute('value') || '?',
-                            description: item.querySelector('description')?.textContent || 'No description available.',
-                            rating: parseFloat(item.querySelector('statistics ratings average')?.getAttribute('value') || '0').toFixed(1)
-                        };
+                                BGG._cachedData = mappedData;
+                                resolve(mappedData);
+                            },
+                            error: function (err) {
+                                reject(err);
+                            }
+                        });
                     });
                 } catch (error) {
-                    console.error("BGG API Error:", error);
-                    UI.showToast("Error fetching from BGG", "error");
+                    console.error("CSV Loading Error:", error);
+                    UI.showToast("Error loading CSV. Make sure boardgames_ranks.csv is in the folder.", "error");
                     return [];
                 }
+            },
+            search: async (query) => {
+                const allGames = await BGG.loadCSV();
+
+                if (!allGames || allGames.length === 0) return [];
+
+                const lowerQuery = query.toLowerCase();
+
+                // Filter games based on search query
+                const matchedGames = allGames.filter(game =>
+                    game.name && game.name.toLowerCase().includes(lowerQuery)
+                );
+
+                // Limit results to 20 to prevent the UI from freezing on a massive CSV
+                return matchedGames.slice(0, 20);
             }
         };
 
@@ -901,7 +934,7 @@
             collectionCard: (game, isWishlist = false) => `
                 <div class="bg-white border border-slate-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow cursor-pointer group flex flex-col h-full" onclick='Render.openGameDetails(${JSON.stringify(game).replace(/'/g, "&#39;")}, ${isWishlist})'>
                     <div class="aspect-[4/3] bg-slate-100 overflow-hidden relative">
-                        <img src="${game.image}" alt="${game.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
+                        <img src="${game.image}" alt="${game.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" onerror="this.src='https://via.placeholder.com/150x150.png?text=No+Cover'">
                     </div>
                     <div class="p-3 flex-1 flex flex-col">
                         <h4 class="font-semibold text-slate-900 text-sm mb-1 line-clamp-2 leading-tight flex-1">${game.name}</h4>
@@ -953,7 +986,7 @@
 
                 grid.innerHTML = results.map(game => `
                     <div class="bg-white border border-slate-200 rounded-xl p-4 flex gap-4 items-start hover:shadow-md transition-all">
-                        <img src="${game.image}" alt="cover" class="w-20 h-24 object-cover rounded-md bg-slate-100 flex-shrink-0 border border-slate-100">
+                        <img src="${game.image}" onerror="this.src='https://via.placeholder.com/150x150.png?text=No+Cover'" alt="cover" class="w-20 h-24 object-cover rounded-md bg-slate-100 flex-shrink-0 border border-slate-100">
                         <div class="flex-1 min-w-0">
                             <h4 class="font-bold text-slate-900 text-sm line-clamp-1 mb-1">${game.name}</h4>
                             <p class="text-xs text-slate-500 mb-2">${game.year}</p>
@@ -973,7 +1006,11 @@
                 document.getElementById('modal-title').textContent = game.name;
                 document.getElementById('modal-name').textContent = game.name;
                 document.getElementById('modal-year').textContent = game.year || 'N/A';
-                document.getElementById('modal-rating').textContent = game.rating || '-';
+
+                // Format rating to 1 decimal place if it's a valid number
+                const parsedRating = parseFloat(game.rating);
+                document.getElementById('modal-rating').textContent = isNaN(parsedRating) ? '-' : parsedRating.toFixed(1);
+
                 document.getElementById('modal-players').textContent = `${game.minPlayers || '?'} - ${game.maxPlayers || '?'} players`;
                 document.getElementById('modal-time').textContent = `${game.playTime || '?'} mins`;
                 document.getElementById('modal-image').src = game.image;
