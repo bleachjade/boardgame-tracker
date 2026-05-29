@@ -830,14 +830,38 @@
         };
 
         // ==========================================
-        // 5. BOARD GAME DATA (Local CSV Parsing)
+        // 5. BOARD GAME DATA (Hybrid CSV + BGG API)
         // ==========================================
         const BGG = {
             _cachedData: null,
-            loadCSV: async () => {
-                // Return cached data immediately if we've already parsed the CSV
-                if (BGG._cachedData) return BGG._cachedData;
 
+            // Proxy Fetcher to bypass CORS when getting rich details
+            fetchXML: async (bggUrl) => {
+                const strategies = [
+                    async () => {
+                        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(bggUrl)}`);
+                        const data = await res.json();
+                        if (data.contents && !data.contents.includes('401 Unauthorized')) return data.contents;
+                        throw new Error("Proxy 1 blocked by BGG");
+                    },
+                    async () => {
+                        const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(bggUrl)}`);
+                        const text = await res.text();
+                        if (res.ok && !text.includes('401 Unauthorized')) return text;
+                        throw new Error("Proxy 2 blocked by BGG");
+                    }
+                ];
+
+                for (let strategy of strategies) {
+                    try { return await strategy(); }
+                    catch (e) { console.warn("Proxy attempt failed, trying next..."); }
+                }
+                throw new Error("All public proxies blocked.");
+            },
+
+            // 1. Load basic search index from CSV
+            loadCSV: async () => {
+                if (BGG._cachedData) return BGG._cachedData;
                 try {
                     const res = await fetch('./boardgames_ranks.csv');
                     if (!res.ok) throw new Error("Could not load local boardgames_ranks.csv");
@@ -845,40 +869,23 @@
 
                     return new Promise((resolve, reject) => {
                         Papa.parse(csvText, {
-                            header: false, // Changed to false to read data by column index
+                            header: false,
                             skipEmptyLines: true,
                             complete: function (results) {
                                 let rows = results.data;
+                                if (rows.length > 0 && isNaN(parseInt(rows[0][0]))) rows.shift();
 
-                                // Safely ignore the first row if it happens to be a text header (e.g. ID isn't a number)
-                                if (rows.length > 0 && isNaN(parseInt(rows[0][0]))) {
-                                    rows.shift();
-                                }
-
-                                const mappedData = rows.map((row, index) => {
-                                    const gameName = row[1] || 'Unknown Game';
-                                    return {
-                                        id: row[0] || String(index),                   // Column 0: ID
-                                        name: gameName,                                // Column 1: Name
-                                        // The provided CSV doesn't have images, so we use a dynamic placeholder
-                                        image: `https://via.placeholder.com/300x300.png?text=${encodeURIComponent(gameName.substring(0, 20))}`,
-                                        year: row[2] || 'N/A',                         // Column 2: Year
-                                        // CSV lacks player counts and time, providing safe defaults
-                                        minPlayers: '?',
-                                        maxPlayers: '?',
-                                        playTime: '?',
-                                        description: 'No description available in this dataset.',
-                                        // Column 5 is Average Rating, Column 4 is Bayes Average
-                                        rating: row[5] || row[4] || '0'
-                                    };
-                                });
+                                const mappedData = rows.map((row, index) => ({
+                                    id: row[0] || String(index),
+                                    name: row[1] || 'Unknown Game',
+                                    year: row[2] || 'N/A',
+                                    rating: row[5] || row[4] || '0'
+                                }));
 
                                 BGG._cachedData = mappedData;
                                 resolve(mappedData);
                             },
-                            error: function (err) {
-                                reject(err);
-                            }
+                            error: (err) => reject(err)
                         });
                     });
                 } catch (error) {
@@ -887,20 +894,66 @@
                     return [];
                 }
             },
+
+            // 2. Search CSV, then enrich with BGG API
             search: async (query) => {
                 const allGames = await BGG.loadCSV();
-
                 if (!allGames || allGames.length === 0) return [];
 
                 const lowerQuery = query.toLowerCase();
-
-                // Filter games based on search query
+                // Filter and grab top 12 matches from CSV
                 const matchedGames = allGames.filter(game =>
                     game.name && game.name.toLowerCase().includes(lowerQuery)
-                );
+                ).slice(0, 12);
 
-                // Limit results to 20 to prevent the UI from freezing on a massive CSV
-                return matchedGames.slice(0, 20);
+                if (matchedGames.length === 0) return [];
+
+                // Fetch rich details from BGG using the IDs we found in the CSV
+                try {
+                    const ids = matchedGames.map(g => g.id).join(',');
+                    const detailsUrl = `https://boardgamegeek.com/xmlapi2/thing?id=${ids}&stats=1`;
+                    const xmlText = await BGG.fetchXML(detailsUrl);
+
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(xmlText, 'text/xml');
+                    const items = Array.from(xml.querySelectorAll('item'));
+
+                    // Merge API data (Images, Player Count, Time) with our CSV matches
+                    return matchedGames.map(csvGame => {
+                        const bggItem = items.find(item => item.getAttribute('id') === String(csvGame.id));
+
+                        if (bggItem) {
+                            return {
+                                id: csvGame.id,
+                                name: bggItem.querySelector('name[type="primary"]')?.getAttribute('value') || csvGame.name,
+                                image: bggItem.querySelector('image')?.textContent || `https://placehold.co/300x300/e2e8f0/475569?text=${encodeURIComponent(csvGame.name.substring(0, 15))}`,
+                                year: bggItem.querySelector('yearpublished')?.getAttribute('value') || csvGame.year,
+                                minPlayers: bggItem.querySelector('minplayers')?.getAttribute('value') || '?',
+                                maxPlayers: bggItem.querySelector('maxplayers')?.getAttribute('value') || '?',
+                                playTime: bggItem.querySelector('playingtime')?.getAttribute('value') || '?',
+                                description: bggItem.querySelector('description')?.textContent || 'No description available.',
+                                rating: parseFloat(bggItem.querySelector('statistics ratings average')?.getAttribute('value') || csvGame.rating).toFixed(1)
+                            };
+                        }
+
+                        // Fallback if API doesn't find the specific game
+                        return {
+                            ...csvGame,
+                            image: `https://placehold.co/300x300/e2e8f0/475569?text=${encodeURIComponent(csvGame.name.substring(0, 15))}`,
+                            minPlayers: '?', maxPlayers: '?', playTime: '?',
+                            description: 'Description unavailable.'
+                        };
+                    });
+                } catch (error) {
+                    console.error("Failed to enrich data from BGG", error);
+                    // Absolute fallback if proxies completely fail
+                    return matchedGames.map(g => ({
+                        ...g,
+                        image: `https://placehold.co/300x300/e2e8f0/475569?text=${encodeURIComponent(g.name.substring(0, 15))}`,
+                        minPlayers: '?', maxPlayers: '?', playTime: '?',
+                        description: 'Description unavailable (API blocked).'
+                    }));
+                }
             }
         };
 
@@ -934,7 +987,7 @@
             collectionCard: (game, isWishlist = false) => `
                 <div class="bg-white border border-slate-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow cursor-pointer group flex flex-col h-full" onclick='Render.openGameDetails(${JSON.stringify(game).replace(/'/g, "&#39;")}, ${isWishlist})'>
                     <div class="aspect-[4/3] bg-slate-100 overflow-hidden relative">
-                        <img src="${game.image}" alt="${game.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" onerror="this.src='https://via.placeholder.com/150x150.png?text=No+Cover'">
+                        <img src="${game.image}" alt="${game.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" onerror="this.src='https://placehold.co/300x300/e2e8f0/475569?text=No+Cover'">
                     </div>
                     <div class="p-3 flex-1 flex flex-col">
                         <h4 class="font-semibold text-slate-900 text-sm mb-1 line-clamp-2 leading-tight flex-1">${game.name}</h4>
@@ -986,7 +1039,7 @@
 
                 grid.innerHTML = results.map(game => `
                     <div class="bg-white border border-slate-200 rounded-xl p-4 flex gap-4 items-start hover:shadow-md transition-all">
-                        <img src="${game.image}" onerror="this.src='https://via.placeholder.com/150x150.png?text=No+Cover'" alt="cover" class="w-20 h-24 object-cover rounded-md bg-slate-100 flex-shrink-0 border border-slate-100">
+                        <img src="${game.image}" onerror="this.src='https://placehold.co/150x150/e2e8f0/475569?text=No+Cover'" alt="cover" class="w-20 h-24 object-cover rounded-md bg-slate-100 flex-shrink-0 border border-slate-100">
                         <div class="flex-1 min-w-0">
                             <h4 class="font-bold text-slate-900 text-sm line-clamp-1 mb-1">${game.name}</h4>
                             <p class="text-xs text-slate-500 mb-2">${game.year}</p>
