@@ -828,14 +828,45 @@
         };
 
         // ==========================================
-        // 5. BOARD GAME GEEK API
+        // 5. BOARD GAME GEEK API (Multi-Proxy Fallback)
         // ==========================================
         const BGG = {
+            fetchXML: async (bggUrl) => {
+                // We use an array of different proxy strategies to bypass BGG's IP blocking WAF
+                const strategies = [
+                    // Strategy 1: allorigins.win (JSON wrapped - avoids 522 Cloudflare timeouts)
+                    async () => {
+                        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(bggUrl)}`);
+                        const data = await res.json();
+                        // If BGG blocks this proxy, it returns a 401 HTML page inside the contents string
+                        if (data.contents && !data.contents.includes('401 Unauthorized')) return data.contents;
+                        throw new Error("Proxy 1 blocked by BGG");
+                    },
+                    // Strategy 2: codetabs.com (Raw text - very reliable)
+                    async () => {
+                        const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(bggUrl)}`);
+                        const text = await res.text();
+                        if (res.ok && !text.includes('401 Unauthorized')) return text;
+                        throw new Error("Proxy 2 blocked by BGG");
+                    }
+                ];
+
+                for (let strategy of strategies) {
+                    try {
+                        return await strategy(); // Return immediately if successful
+                    } catch (e) {
+                        console.warn("Proxy attempt failed, trying next...", e);
+                    }
+                }
+
+                throw new Error("All public proxies are currently blocked by BoardGameGeek.");
+            },
             search: async (query) => {
                 try {
                     // Step 1: Search API (Gets IDs)
-                    const res = await fetch(`https://corsproxy.io/?url=https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`);
-                    const text = await res.text();
+                    const searchUrl = `https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`;
+                    const text = await BGG.fetchXML(searchUrl);
+
                     const parser = new DOMParser();
                     const xml = parser.parseFromString(text, 'text/xml');
 
@@ -845,8 +876,9 @@
                     const ids = items.map(item => item.getAttribute('id')).join(',');
 
                     // Step 2: Thing API (Gets Images and Stats)
-                    const detailsRes = await fetch(`https://corsproxy.io/?url=https://boardgamegeek.com/xmlapi2/thing?id=${ids}`);
-                    const detailsText = await detailsRes.text();
+                    const detailsUrl = `https://boardgamegeek.com/xmlapi2/thing?id=${ids}`;
+                    const detailsText = await BGG.fetchXML(detailsUrl);
+
                     const detailsXml = parser.parseFromString(detailsText, 'text/xml');
                     const detailItems = Array.from(detailsXml.querySelectorAll('item'));
 
@@ -865,7 +897,7 @@
                     });
                 } catch (error) {
                     console.error("BGG API Error:", error);
-                    UI.showToast("Error fetching from BGG", "error");
+                    UI.showToast("Error connecting to BGG database.", "error");
                     return [];
                 }
             }
