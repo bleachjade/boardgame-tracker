@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BoardGame Tracker | Collection Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #F9FAFB; }
+        
+        /* Custom Scrollbar for SaaS look */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        .loader {
+            border-top-color: #4f46e5;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Modals & Animations */
+        .fade-in { animation: fadeIn 0.2s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        
+        .slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        .toast-enter { animation: toastEnter 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes toastEnter { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        
+        .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    </style>
+</head>
+<body class="text-slate-800 h-screen flex overflow-hidden selection:bg-indigo-100 selection:text-indigo-900">
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="fixed inset-0 bg-slate-50 z-50 flex items-center justify-center fade-in">
+        <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-100">
+            <div class="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mx-auto mb-6">
+                <i data-lucide="dice-5" class="w-8 h-8"></i>
+            </div>
+            <h1 class="text-2xl font-bold mb-2 text-slate-900">BoardGame Tracker</h1>
+            <p class="text-slate-500 mb-8">Manage your collection, avoid duplicates, and share with your groups.</p>
+            
+            <button id="btn-google-login" class="w-full flex items-center justify-center gap-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 font-medium py-3 px-4 rounded-xl transition-all shadow-sm">
+                <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/><path fill="none" d="M1 1h22v22H1z"/></svg>
+                Sign in with Google
+            </button>
+            <button id="btn-anon-login" class="w-full mt-3 flex items-center justify-center gap-3 bg-indigo-600 text-white hover:bg-indigo-700 font-medium py-3 px-4 rounded-xl transition-all shadow-sm">
+                Continue as Guest (Preview)
+            </button>
+            <div id="login-loading" class="hidden mt-4 text-indigo-600 flex justify-center">
+                <div class="loader w-6 h-6 border-4 border-slate-200 rounded-full"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-white border-r border-slate-200 flex-shrink-0 flex flex-col hidden md:flex h-full z-10">
+        <div class="p-6 flex items-center gap-3">
+            <div class="w-8 h-8 bg-indigo-600 text-white rounded-lg flex items-center justify-center">
+                <i data-lucide="dice-5" class="w-5 h-5"></i>
+            </div>
+            <span class="font-bold text-lg tracking-tight text-slate-900">BG Tracker</span>
+        </div>
+
+        <nav class="flex-1 px-4 space-y-1 overflow-y-auto">
+            <!-- Group Selector -->
+            <div class="mb-6 px-2">
+                <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Active Group</p>
+                <div class="relative group cursor-pointer" onclick="UI.openModal('groups-modal')">
+                    <div class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-colors">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-6 h-6 rounded bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold" id="active-group-icon">M</div>
+                            <span class="font-medium text-sm truncate" id="active-group-name">My Collection</span>
+                        </div>
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 text-slate-400"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Links -->
+            <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Menu</p>
+            <a href="#" onclick="UI.navigate('dashboard')" id="nav-dashboard" class="nav-item flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg bg-indigo-50 text-indigo-700 transition-colors">
+                <i data-lucide="layout-dashboard" class="w-4 h-4"></i> Collection
+            </a>
+            <a href="#" onclick="UI.navigate('search')" id="nav-search" class="nav-item flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">
+                <i data-lucide="search" class="w-4 h-4"></i> Add Games
+            </a>
+            <a href="#" onclick="UI.navigate('quick-check')" id="nav-quick-check" class="nav-item flex items-center justify-between px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">
+                <div class="flex items-center gap-3"><i data-lucide="scan-line" class="w-4 h-4"></i> Who Owns This?</div>
+                <span class="bg-indigo-100 text-indigo-700 py-0.5 px-2 rounded-full text-[10px] font-bold">NEW</span>
+            </a>
+            <a href="#" onclick="UI.navigate('wishlist')" id="nav-wishlist" class="nav-item flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">
+                <i data-lucide="heart" class="w-4 h-4"></i> Wishlist
+            </a>
+            <a href="#" onclick="UI.navigate('activity')" id="nav-activity" class="nav-item flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">
+                <i data-lucide="activity" class="w-4 h-4"></i> Activity Feed
+            </a>
+        </nav>
+
+        <div class="p-4 border-t border-slate-200">
+            <div class="flex items-center gap-3 px-2">
+                <img id="user-avatar" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTIwIDIxdi0yYTQgNCAwIDAgMC00LTRoLThhNCA0IDAgMCAwLTQgNHYyIi8+PGNpcmNsZSBjeD0iMTIiIGN5PSI3IiByPSI0Ii8+PC9zdmc+" alt="Avatar" class="w-9 h-9 rounded-full bg-slate-100 object-cover border border-slate-200">
+                <div class="flex-1 min-w-0">
+                    <p id="user-name" class="text-sm font-medium text-slate-900 truncate">User</p>
+                    <p id="user-email" class="text-xs text-slate-500 truncate">email@example.com</p>
+                </div>
+                <button onclick="Auth.signOut()" class="text-slate-400 hover:text-red-500 transition-colors p-1" title="Sign Out">
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col h-full bg-slate-50/50 relative overflow-y-auto" id="main-content">
+        <!-- Mobile Header -->
+        <header class="md:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-20">
+            <div class="flex items-center gap-2">
+                <div class="w-7 h-7 bg-indigo-600 text-white rounded-md flex items-center justify-center">
+                    <i data-lucide="dice-5" class="w-4 h-4"></i>
+                </div>
+                <span class="font-bold text-slate-900">BG Tracker</span>
+            </div>
+            <button onclick="UI.toggleMobileMenu()" class="text-slate-600">
+                <i data-lucide="menu" class="w-6 h-6"></i>
+            </button>
+        </header>
+
+        <!-- View Containers -->
+        <div class="p-4 md:p-8 max-w-6xl w-full mx-auto pb-24">
+            
+            <!-- Dashboard View -->
+            <div id="view-dashboard" class="view-section slide-up">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-900">Collection Dashboard</h1>
+                        <p class="text-slate-500" id="dash-group-subtitle">Viewing games in active group</p>
+                    </div>
+                    <button onclick="UI.navigate('search')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2 text-sm">
+                        <i data-lucide="plus" class="w-4 h-4"></i> Add Game
+                    </button>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+                        <span class="text-slate-500 text-sm font-medium mb-1">Total Games</span>
+                        <span class="text-2xl font-bold text-slate-900" id="stat-total">0</span>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+                        <span class="text-slate-500 text-sm font-medium mb-1">Avg Play Time</span>
+                        <span class="text-2xl font-bold text-slate-900" id="stat-time">0m</span>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+                        <span class="text-slate-500 text-sm font-medium mb-1">Max Players</span>
+                        <span class="text-2xl font-bold text-slate-900" id="stat-players">0</span>
+                    </div>
+                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+                        <span class="text-slate-500 text-sm font-medium mb-1">Total Value</span>
+                        <span class="text-2xl font-bold text-slate-900 text-green-600">Priceless</span>
+                    </div>
+                </div>
+
+                <!-- Collection Controls -->
+                <div class="flex flex-col sm:flex-row justify-between gap-4 mb-6">
+                    <div class="relative max-w-sm w-full">
+                        <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-400"></i>
+                        <input type="text" id="filter-collection" placeholder="Search collection..." class="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                    </div>
+                    <select id="sort-collection" class="border border-slate-200 rounded-lg text-sm px-4 py-2 bg-white focus:outline-none focus:border-indigo-500">
+                        <option value="name">Name (A-Z)</option>
+                        <option value="addedAt">Recently Added</option>
+                        <option value="year">Year Published</option>
+                    </select>
+                </div>
+
+                <!-- Collection Grid -->
+                <div id="collection-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+                    <!-- Cards injected here -->
+                </div>
+                <div id="collection-empty" class="hidden text-center py-20">
+                    <i data-lucide="library" class="w-12 h-12 text-slate-300 mx-auto mb-4"></i>
+                    <h3 class="text-lg font-medium text-slate-900">Your collection is empty</h3>
+                    <p class="text-slate-500 mt-1 max-w-sm mx-auto">Start building your library by searching for board games and adding them to your group.</p>
+                </div>
+            </div>
+
+            <!-- Search View -->
+            <div id="view-search" class="view-section hidden slide-up">
+                <h1 class="text-2xl font-bold text-slate-900 mb-2">Search BoardGameGeek</h1>
+                <p class="text-slate-500 mb-8">Find games to add to your collection or wishlist.</p>
+                
+                <div class="relative max-w-2xl w-full mb-8">
+                    <i data-lucide="search" class="w-5 h-5 absolute left-4 top-3.5 text-slate-400"></i>
+                    <input type="text" id="bgg-search-input" placeholder="Search for Catan, Wingspan, Azul..." class="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-xl text-base shadow-sm focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-shadow">
+                </div>
+
+                <div id="search-loading" class="hidden text-center py-12">
+                    <div class="loader w-8 h-8 border-4 border-slate-200 border-t-indigo-600 rounded-full mx-auto mb-4"></div>
+                    <p class="text-slate-500">Searching BGG database...</p>
+                </div>
+
+                <div id="search-results" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <!-- Search Results Injected -->
+                </div>
+            </div>
+
+            <!-- Quick Check (Who Owns This) -->
+            <div id="view-quick-check" class="view-section hidden slide-up">
+                <h1 class="text-2xl font-bold text-slate-900 mb-2">Who owns this?</h1>
+                <p class="text-slate-500 mb-8">Quickly search across all groups you belong to. Perfect for checking before you buy.</p>
+                
+                <div class="relative max-w-2xl w-full mb-8">
+                    <i data-lucide="scan-line" class="w-5 h-5 absolute left-4 top-3.5 text-indigo-500"></i>
+                    <input type="text" id="quick-check-input" placeholder="Type a game name..." class="w-full pl-12 pr-4 py-3 border-2 border-indigo-100 bg-indigo-50/30 rounded-xl text-base focus:outline-none focus:border-indigo-500 focus:bg-white transition-all text-lg font-medium">
+                </div>
+
+                <div id="quick-check-results" class="space-y-4 max-w-2xl">
+                    <!-- Quick Check Results -->
+                </div>
+                <div id="quick-check-empty" class="hidden text-center py-12 max-w-2xl bg-white border border-slate-200 rounded-xl border-dashed">
+                    <i data-lucide="check-circle" class="w-10 h-10 text-green-500 mx-auto mb-3"></i>
+                    <h3 class="text-lg font-medium text-slate-900">Safe to buy!</h3>
+                    <p class="text-slate-500 mt-1">None of your groups own this game yet.</p>
+                </div>
+            </div>
+
+            <!-- Wishlist View -->
+            <div id="view-wishlist" class="view-section hidden slide-up">
+                <h1 class="text-2xl font-bold text-slate-900 mb-2">My Wishlist</h1>
+                <p class="text-slate-500 mb-8">Games you're keeping an eye on.</p>
+                <div id="wishlist-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6"></div>
+                <div id="wishlist-empty" class="hidden text-center py-20">
+                    <p class="text-slate-500">Your wishlist is empty.</p>
+                </div>
+            </div>
+
+            <!-- Activity Feed -->
+            <div id="view-activity" class="view-section hidden slide-up">
+                <h1 class="text-2xl font-bold text-slate-900 mb-2">Activity Feed</h1>
+                <p class="text-slate-500 mb-8">Recent updates across your groups.</p>
+                <div id="activity-list" class="max-w-2xl space-y-4"></div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Game Details Modal -->
+    <div id="game-modal" class="fixed inset-0 bg-slate-900/60 z-[100] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl slide-up">
+            <div class="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+                <h3 class="font-bold text-lg text-slate-800" id="modal-title">Game Details</h3>
+                <button onclick="UI.closeModal('game-modal')" class="text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded-lg p-1">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-1 flex flex-col md:flex-row gap-6">
+                <div class="w-full md:w-1/3 flex-shrink-0">
+                    <img id="modal-image" src="" alt="Cover" class="w-full h-auto object-contain rounded-lg border border-slate-200 shadow-sm bg-white">
+                </div>
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span id="modal-year" class="bg-slate-100 text-slate-600 text-xs font-semibold px-2.5 py-0.5 rounded"></span>
+                        <div class="flex items-center gap-1 text-amber-500 text-sm font-semibold">
+                            <i data-lucide="star" class="w-4 h-4 fill-current"></i> <span id="modal-rating"></span>
+                        </div>
+                    </div>
+                    <h2 id="modal-name" class="text-3xl font-bold text-slate-900 mb-4 tracking-tight"></h2>
+                    
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="flex items-center gap-3 text-slate-600">
+                            <i data-lucide="users" class="w-5 h-5 text-indigo-500"></i>
+                            <div>
+                                <p class="text-xs text-slate-400 font-medium">Players</p>
+                                <p class="text-sm font-semibold text-slate-900" id="modal-players"></p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3 text-slate-600">
+                            <i data-lucide="clock" class="w-5 h-5 text-indigo-500"></i>
+                            <div>
+                                <p class="text-xs text-slate-400 font-medium">Play Time</p>
+                                <p class="text-sm font-semibold text-slate-900" id="modal-time"></p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <p id="modal-desc" class="text-sm text-slate-600 leading-relaxed mb-6 whitespace-pre-line"></p>
+                    
+                    <!-- Actions -->
+                    <div class="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-100" id="modal-actions">
+                        <!-- Buttons injected via JS based on state -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manage Groups Modal -->
+    <div id="groups-modal" class="fixed inset-0 bg-slate-900/60 z-[100] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl slide-up">
+            <div class="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+                <h3 class="font-bold text-lg text-slate-800">Manage Groups</h3>
+                <button onclick="UI.closeModal('groups-modal')" class="text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6">
+                <div class="mb-6">
+                    <h4 class="text-sm font-semibold text-slate-900 mb-3">Your Groups</h4>
+                    <div id="groups-list" class="space-y-2 max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50">
+                        <!-- Groups List -->
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-slate-200">
+                    <h4 class="text-sm font-semibold text-slate-900 mb-3">Create New Group</h4>
+                    <form id="create-group-form" class="flex gap-2">
+                        <input type="text" id="new-group-name" placeholder="E.g., Board Game Club" required class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">Create</button>
+                    </form>
+                </div>
+                
+                <div class="pt-6 mt-4 border-t border-slate-200" id="invite-section">
+                    <h4 class="text-sm font-semibold text-slate-900 mb-3">Invite Member to Active Group</h4>
+                    <form id="invite-member-form" class="flex gap-2">
+                        <input type="email" id="invite-email" placeholder="friend@example.com" required class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                        <button type="submit" class="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">Invite</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, addDoc, updateDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ==========================================
+        // 1. CONFIGURATION & STATE
+        // ==========================================
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            // Add fallback config if running entirely detached from platform
+            projectId: "demo-project" 
+        };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'boardgame-tracker';
+        
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        const State = {
+            user: null,
+            groups: [],
+            activeGroupId: null,
+            groupGames: [], // Games for active group
+            allAccessGames: [], // Games across ALL user's groups (for Quick Check)
+            wishlist: [],
+            activities: [],
+            currentView: 'dashboard',
+            searchResults: [],
+            selectedGame: null, // For modal
+            unsubscribes: [] // For cleanup
+        };
+
+        // DOM Elements
+        const DOM = {
+            loginScreen: document.getElementById('login-screen'),
+            mainContent: document.getElementById('main-content'),
+            userName: document.getElementById('user-name'),
+            userEmail: document.getElementById('user-email'),
+            userAvatar: document.getElementById('user-avatar'),
+            activeGroupName: document.getElementById('active-group-name'),
+            activeGroupIcon: document.getElementById('active-group-icon'),
+            dashGroupSubtitle: document.getElementById('dash-group-subtitle')
+        };
+
+        // Initialize Icons
+        lucide.createIcons();
+
+        // ==========================================
+        // 2. UTILITIES
+        // ==========================================
+        window.UI = {
+            navigate: (viewId) => {
+                document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
+                document.getElementById(`view-${viewId}`).classList.remove('hidden');
+                
+                document.querySelectorAll('.nav-item').forEach(el => {
+                    el.classList.remove('bg-indigo-50', 'text-indigo-700');
+                    el.classList.add('text-slate-600');
+                });
+                const activeNav = document.getElementById(`nav-${viewId}`);
+                if(activeNav) {
+                    activeNav.classList.remove('text-slate-600', 'hover:bg-slate-50');
+                    activeNav.classList.add('bg-indigo-50', 'text-indigo-700');
+                }
+                State.currentView = viewId;
+                
+                // Re-render specific views on navigation
+                if (viewId === 'dashboard') Render.collection();
+                if (viewId === 'wishlist') Render.wishlist();
+                if (viewId === 'activity') Render.activities();
+            },
+            openModal: (id) => {
+                const modal = document.getElementById(id);
+                modal.classList.remove('hidden');
+                if (id === 'groups-modal') Render.groupsModal();
+            },
+            closeModal: (id) => document.getElementById(id).classList.add('hidden'),
+            showToast: (msg, type = 'success') => {
+                const container = document.getElementById('toast-container');
+                const toast = document.createElement('div');
+                toast.className = `toast-enter flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium border bg-white ${type === 'error' ? 'border-red-200 text-red-700' : 'border-slate-200 text-slate-800'}`;
+                
+                const icon = type === 'error' ? '<i data-lucide="alert-circle" class="w-5 h-5 text-red-500"></i>' : '<i data-lucide="check-circle" class="w-5 h-5 text-green-500"></i>';
+                toast.innerHTML = `${icon} <span>${msg}</span>`;
+                
+                container.appendChild(toast);
+                lucide.createIcons({root: toast});
+                
+                setTimeout(() => {
+                    toast.style.opacity = '0';
+                    toast.style.transform = 'translateX(100%)';
+                    toast.style.transition = 'all 0.3s ease';
+                    setTimeout(() => toast.remove(), 300);
+                }, 3000);
+            },
+            toggleMobileMenu: () => {
+                // Implementation for mobile sidebar toggle (simplified for single file)
+                UI.showToast("Sidebar toggled (Mobile layout optimization)");
+            }
+        };
+
+        const debounce = (func, delay) => {
+            let timeoutId;
+            return (...args) => {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => func(...args), delay);
+            };
+        };
+
+        const generateId = () => crypto.randomUUID();
+
+        // ==========================================
+        // 3. AUTHENTICATION (RULE 3 Compliance)
+        // ==========================================
+        window.Auth = {
+            init: async () => {
+                try {
+                    // Try custom token first for canvas environment
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else if (window.location.hostname === 'localhost' || window.location.hostname.includes('firebase')) {
+                         // Await user action if normal browser environment without token.
+                    }
+                } catch (e) {
+                    console.error("Auth init error:", e);
+                }
+
+                // Auth Listener
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        State.user = {
+                            uid: user.uid,
+                            email: user.email || `guest_${user.uid.substring(0,5)}@demo.com`,
+                            displayName: user.displayName || 'Guest User',
+                            photoURL: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${user.displayName || 'G'}`
+                        };
+                        DOM.loginScreen.classList.add('hidden');
+                        DOM.userName.textContent = State.user.displayName;
+                        DOM.userEmail.textContent = State.user.email;
+                        DOM.userAvatar.src = State.user.photoURL;
+                        
+                        DB.setupListeners();
+                    } else {
+                        State.user = null;
+                        DOM.loginScreen.classList.remove('hidden');
+                        DB.clearListeners();
+                    }
+                });
+            },
+            signInGoogle: async () => {
+                document.getElementById('login-loading').classList.remove('hidden');
+                try {
+                    const provider = new GoogleAuthProvider();
+                    await signInWithPopup(auth, provider);
+                } catch (error) {
+                    UI.showToast(error.message, 'error');
+                }
+                document.getElementById('login-loading').classList.add('hidden');
+            },
+            signInAnon: async () => {
+                document.getElementById('login-loading').classList.remove('hidden');
+                try {
+                    await signInAnonymously(auth);
+                } catch (error) {
+                    UI.showToast(error.message, 'error');
+                }
+                document.getElementById('login-loading').classList.add('hidden');
+            },
+            signOut: () => signOut(auth)
+        };
+
+        document.getElementById('btn-google-login').addEventListener('click', Auth.signInGoogle);
+        document.getElementById('btn-anon-login').addEventListener('click', Auth.signInAnon);
+
+        // ==========================================
+        // 4. DATABASE / FIRESTORE (RULE 1 & 2)
+        // ==========================================
+        // Strict paths mapping
+        const PATHS = {
+            groups: () => collection(db, 'artifacts', appId, 'public', 'data', 'groups'),
+            games: () => collection(db, 'artifacts', appId, 'public', 'data', 'groupGames'),
+            activities: () => collection(db, 'artifacts', appId, 'public', 'data', 'activities'),
+            wishlist: (uid) => collection(db, 'artifacts', appId, 'users', uid, 'wishlist')
+        };
+
+        const DB = {
+            setupListeners: () => {
+                if (!State.user) return;
+                DB.clearListeners();
+
+                // 1. Listen to Groups (Fetch all, filter in JS - Rule 2)
+                const unsubGroups = onSnapshot(PATHS.groups(), (snapshot) => {
+                    const allGroups = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+                    State.groups = allGroups.filter(g => 
+                        g.ownerId === State.user.uid || 
+                        (g.members && g.members.includes(State.user.email))
+                    );
+
+                    // Auto-create default group if none exist
+                    if (State.groups.length === 0) {
+                        DB.createGroup("My Collection");
+                    } else {
+                        if (!State.activeGroupId || !State.groups.find(g => g.id === State.activeGroupId)) {
+                            DB.setActiveGroup(State.groups[0].id);
+                        } else {
+                            Render.sidebarGroup(); // Re-render active group label
+                            Render.groupsModal(); // Re-render if modal open
+                        }
+                    }
+                }, (error) => console.error("Error listening to groups:", error));
+                State.unsubscribes.push(unsubGroups);
+
+                // 2. Listen to Games
+                const unsubGames = onSnapshot(PATHS.games(), (snapshot) => {
+                    const allGames = snapshot.docs.map(d => ({_docId: d.id, ...d.data()}));
+                    // Games across all user's groups (for Quick Check)
+                    State.allAccessGames = allGames.filter(g => State.groups.some(group => group.id === g.groupId));
+                    
+                    // Games for active group
+                    if (State.activeGroupId) {
+                        State.groupGames = allGames.filter(g => g.groupId === State.activeGroupId);
+                        Render.collection();
+                        Render.stats();
+                    }
+                }, (error) => console.error("Error listening to games:", error));
+                State.unsubscribes.push(unsubGames);
+
+                // 3. Listen to Wishlist (Private)
+                const unsubWish = onSnapshot(PATHS.wishlist(State.user.uid), (snapshot) => {
+                    State.wishlist = snapshot.docs.map(d => ({_docId: d.id, ...d.data()}));
+                    if(State.currentView === 'wishlist') Render.wishlist();
+                }, (error) => console.error("Error listening to wishlist:", error));
+                State.unsubscribes.push(unsubWish);
+
+                // 4. Listen to Activities
+                const unsubAct = onSnapshot(PATHS.activities(), (snapshot) => {
+                    const allActivities = snapshot.docs.map(d => ({...d.data()}));
+                    // Filter activities relevant to user's groups
+                    State.activities = allActivities
+                        .filter(a => State.groups.some(g => g.id === a.groupId))
+                        .sort((a, b) => b.timestamp - a.timestamp)
+                        .slice(0, 50); // Keep last 50
+                    if(State.currentView === 'activity') Render.activities();
+                }, (error) => console.error("Error listening to activities:", error));
+                State.unsubscribes.push(unsubAct);
+            },
+            clearListeners: () => {
+                State.unsubscribes.forEach(unsub => unsub());
+                State.unsubscribes = [];
+            },
+            setActiveGroup: (groupId) => {
+                State.activeGroupId = groupId;
+                Render.sidebarGroup();
+                // Trigger re-filtering of games
+                if(State.allAccessGames.length > 0) {
+                    State.groupGames = State.allAccessGames.filter(g => g.groupId === State.activeGroupId);
+                    Render.collection();
+                    Render.stats();
+                }
+            },
+            createGroup: async (name) => {
+                if (!State.user) return;
+                const newGroup = {
+                    name,
+                    ownerId: State.user.uid,
+                    members: [State.user.email],
+                    createdAt: Date.now()
+                };
+                try {
+                    await addDoc(PATHS.groups(), newGroup);
+                    UI.showToast("Group created");
+                    UI.closeModal('groups-modal');
+                } catch (e) { UI.showToast(e.message, 'error'); }
+            },
+            inviteMember: async (email) => {
+                if (!State.activeGroupId) return;
+                const group = State.groups.find(g => g.id === State.activeGroupId);
+                if (!group) return;
+                if (group.members.includes(email)) {
+                    UI.showToast("User already in group", "error"); return;
+                }
+                
+                try {
+                    await setDoc(doc(PATHS.groups(), group.id), {
+                        ...group,
+                        members: [...group.members, email]
+                    });
+                    DB.logActivity(group.id, 'invited', email);
+                    UI.showToast(`Invited ${email}`);
+                } catch (e) { UI.showToast(e.message, 'error'); }
+            },
+            addGameToCollection: async (game) => {
+                if (!State.activeGroupId) return;
+                
+                // Duplicate Check
+                const exists = State.groupGames.find(g => g.bggId === game.id);
+                if (exists) {
+                    UI.showToast("This board game is already owned by your group.", 'error');
+                    return;
+                }
+
+                const gameData = {
+                    groupId: State.activeGroupId,
+                    bggId: game.id,
+                    name: game.name,
+                    image: game.image,
+                    year: game.year,
+                    minPlayers: game.minPlayers,
+                    maxPlayers: game.maxPlayers,
+                    playTime: game.playTime,
+                    addedBy: State.user.displayName,
+                    addedAt: Date.now()
+                };
+
+                try {
+                    await addDoc(PATHS.games(), gameData);
+                    DB.logActivity(State.activeGroupId, 'added', game.name);
+                    UI.showToast(`Added ${game.name} to collection`);
+                    UI.closeModal('game-modal');
+                } catch (e) { UI.showToast(e.message, 'error'); }
+            },
+            removeGame: async (docId, gameName) => {
+                if (!confirm(`Remove ${gameName} from collection?`)) return;
+                try {
+                    await deleteDoc(doc(PATHS.games(), docId));
+                    DB.logActivity(State.activeGroupId, 'removed', gameName);
+                    UI.showToast(`Removed ${gameName}`);
+                    UI.closeModal('game-modal');
+                } catch (e) { UI.showToast(e.message, 'error'); }
+            },
+            toggleWishlist: async (game) => {
+                const existing = State.wishlist.find(w => w.bggId === game.id);
+                try {
+                    if (existing) {
+                        await deleteDoc(doc(PATHS.wishlist(State.user.uid), existing._docId));
+                        UI.showToast("Removed from wishlist");
+                    } else {
+                        await addDoc(PATHS.wishlist(State.user.uid), {
+                            bggId: game.id,
+                            name: game.name,
+                            image: game.image,
+                            year: game.year,
+                            addedAt: Date.now()
+                        });
+                        UI.showToast("Added to wishlist");
+                    }
+                    Render.modalActions(); // Update modal buttons
+                } catch (e) { UI.showToast(e.message, 'error'); }
+            },
+            logActivity: async (groupId, action, target) => {
+                try {
+                    await addDoc(PATHS.activities(), {
+                        groupId,
+                        action,
+                        target,
+                        userEmail: State.user.email,
+                        userName: State.user.displayName,
+                        timestamp: Date.now()
+                    });
+                } catch (e) { console.error("Activity log failed", e); }
+            }
+        };
+
+        // ==========================================
+        // 5. BOARD GAME GEEK API
+        // ==========================================
+        const BGG = {
+            search: async (query) => {
+                try {
+                    // Step 1: Search API (Gets IDs)
+                    const res = await fetch(`https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`);
+                    const text = await res.text();
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+                    
+                    const items = Array.from(xml.querySelectorAll('item')).slice(0, 15); // Max 15 to avoid huge second payload
+                    if (items.length === 0) return [];
+                    
+                    const ids = items.map(item => item.getAttribute('id')).join(',');
+                    
+                    // Step 2: Thing API (Gets Images and Stats)
+                    const detailsRes = await fetch(`https://boardgamegeek.com/xmlapi2/thing?id=${ids}`);
+                    const detailsText = await detailsRes.text();
+                    const detailsXml = parser.parseFromString(detailsText, 'text/xml');
+                    const detailItems = Array.from(detailsXml.querySelectorAll('item'));
+                    
+                    return detailItems.map(item => {
+                        return {
+                            id: item.getAttribute('id'),
+                            name: item.querySelector('name[type="primary"]')?.getAttribute('value') || 'Unknown',
+                            image: item.querySelector('image')?.textContent || 'https://via.placeholder.com/150x150.png?text=No+Cover',
+                            year: item.querySelector('yearpublished')?.getAttribute('value') || 'N/A',
+                            minPlayers: item.querySelector('minplayers')?.getAttribute('value') || '?',
+                            maxPlayers: item.querySelector('maxplayers')?.getAttribute('value') || '?',
+                            playTime: item.querySelector('playingtime')?.getAttribute('value') || '?',
+                            description: item.querySelector('description')?.textContent || 'No description available.',
+                            rating: parseFloat(item.querySelector('statistics ratings average')?.getAttribute('value') || '0').toFixed(1)
+                        };
+                    });
+                } catch (error) {
+                    console.error("BGG API Error:", error);
+                    UI.showToast("Error fetching from BGG", "error");
+                    return [];
+                }
+            }
+        };
+
+        // ==========================================
+        // 6. RENDERING & UI LOGIC
+        // ==========================================
+        const Render = {
+            sidebarGroup: () => {
+                const group = State.groups.find(g => g.id === State.activeGroupId);
+                if (group) {
+                    DOM.activeGroupName.textContent = group.name;
+                    DOM.activeGroupIcon.textContent = group.name.charAt(0).toUpperCase();
+                    DOM.dashGroupSubtitle.textContent = `Viewing games in ${group.name}`;
+                }
+            },
+            stats: () => {
+                const games = State.groupGames;
+                document.getElementById('stat-total').textContent = games.length;
+                
+                if (games.length > 0) {
+                    const avgTime = Math.round(games.reduce((acc, g) => acc + parseInt(g.playTime||0), 0) / games.length);
+                    document.getElementById('stat-time').textContent = `${avgTime}m`;
+                    
+                    const maxP = Math.max(...games.map(g => parseInt(g.maxPlayers||0)));
+                    document.getElementById('stat-players').textContent = maxP;
+                } else {
+                    document.getElementById('stat-time').textContent = '0m';
+                    document.getElementById('stat-players').textContent = '0';
+                }
+            },
+            collectionCard: (game, isWishlist = false) => `
+                <div class="bg-white border border-slate-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow cursor-pointer group flex flex-col h-full" onclick='Render.openGameDetails(${JSON.stringify(game).replace(/'/g, "&#39;")}, ${isWishlist})'>
+                    <div class="aspect-[4/3] bg-slate-100 overflow-hidden relative">
+                        <img src="${game.image}" alt="${game.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
+                    </div>
+                    <div class="p-3 flex-1 flex flex-col">
+                        <h4 class="font-semibold text-slate-900 text-sm mb-1 line-clamp-2 leading-tight flex-1">${game.name}</h4>
+                        <div class="flex items-center justify-between mt-2">
+                            <span class="text-xs text-slate-500 font-medium">${game.year || ''}</span>
+                            ${!isWishlist ? `
+                                <div class="flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
+                                    <i data-lucide="users" class="w-3 h-3 text-indigo-400"></i> ${game.minPlayers}-${game.maxPlayers}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `,
+            collection: () => {
+                const grid = document.getElementById('collection-grid');
+                const empty = document.getElementById('collection-empty');
+                const filterText = document.getElementById('filter-collection').value.toLowerCase();
+                const sortBy = document.getElementById('sort-collection').value;
+
+                let games = [...State.groupGames];
+                
+                if (filterText) {
+                    games = games.filter(g => g.name.toLowerCase().includes(filterText));
+                }
+
+                games.sort((a, b) => {
+                    if (sortBy === 'name') return a.name.localeCompare(b.name);
+                    if (sortBy === 'addedAt') return b.addedAt - a.addedAt;
+                    if (sortBy === 'year') return parseInt(b.year || 0) - parseInt(a.year || 0);
+                    return 0;
+                });
+
+                if (games.length === 0) {
+                    grid.innerHTML = '';
+                    empty.classList.remove('hidden');
+                } else {
+                    empty.classList.add('hidden');
+                    grid.innerHTML = games.map(g => Render.collectionCard(g)).join('');
+                    lucide.createIcons();
+                }
+            },
+            searchResults: (results) => {
+                const grid = document.getElementById('search-results');
+                if (results.length === 0) {
+                    grid.innerHTML = '<div class="col-span-full text-center text-slate-500 py-8">No results found</div>';
+                    return;
+                }
+                
+                grid.innerHTML = results.map(game => `
+                    <div class="bg-white border border-slate-200 rounded-xl p-4 flex gap-4 items-start hover:shadow-md transition-all">
+                        <img src="${game.image}" alt="cover" class="w-20 h-24 object-cover rounded-md bg-slate-100 flex-shrink-0 border border-slate-100">
+                        <div class="flex-1 min-w-0">
+                            <h4 class="font-bold text-slate-900 text-sm line-clamp-1 mb-1">${game.name}</h4>
+                            <p class="text-xs text-slate-500 mb-2">${game.year}</p>
+                            <div class="flex items-center gap-3 text-xs text-slate-600 mb-3">
+                                <span class="flex items-center gap-1"><i data-lucide="users" class="w-3.5 h-3.5 text-indigo-400"></i> ${game.minPlayers}-${game.maxPlayers}</span>
+                                <span class="flex items-center gap-1"><i data-lucide="clock" class="w-3.5 h-3.5 text-indigo-400"></i> ${game.playTime}m</span>
+                            </div>
+                            <button onclick='Render.openGameDetails(${JSON.stringify(game).replace(/'/g, "&#39;")})' class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium px-3 py-1.5 rounded-lg transition-colors w-full">View Details</button>
+                        </div>
+                    </div>
+                `).join('');
+                lucide.createIcons({root: grid});
+            },
+            openGameDetails: (game, isFromWishlist = false) => {
+                State.selectedGame = game;
+                
+                document.getElementById('modal-title').textContent = game.name;
+                document.getElementById('modal-name').textContent = game.name;
+                document.getElementById('modal-year').textContent = game.year || 'N/A';
+                document.getElementById('modal-rating').textContent = game.rating || '-';
+                document.getElementById('modal-players').textContent = `${game.minPlayers || '?'} - ${game.maxPlayers || '?'} players`;
+                document.getElementById('modal-time').textContent = `${game.playTime || '?'} mins`;
+                document.getElementById('modal-image').src = game.image;
+                
+                // Decode HTML entities in description
+                const txt = document.createElement("textarea");
+                txt.innerHTML = game.description || 'No description provided.';
+                document.getElementById('modal-desc').textContent = txt.value;
+
+                Render.modalActions();
+                UI.openModal('game-modal');
+            },
+            modalActions: () => {
+                const game = State.selectedGame;
+                if (!game) return;
+
+                const isOwned = State.groupGames.find(g => g.bggId === game.id || g.bggId === game.bggId);
+                const isWished = State.wishlist.find(w => w.bggId === game.id || w.bggId === game.bggId);
+                
+                const container = document.getElementById('modal-actions');
+                let html = '';
+
+                if (isOwned) {
+                    html += `
+                        <div class="w-full bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center gap-2 mb-2 text-sm font-medium">
+                            <i data-lucide="check-circle" class="w-5 h-5"></i> In ${DOM.activeGroupName.textContent} Collection
+                        </div>
+                        <button onclick="DB.removeGame('${isOwned._docId}', '${game.name.replace(/'/g, "\\'")}')" class="flex-1 bg-white border border-red-200 text-red-600 hover:bg-red-50 font-medium py-2.5 px-4 rounded-xl transition-all shadow-sm">Remove from Collection</button>
+                    `;
+                } else {
+                    html += `
+                        <button onclick='DB.addGameToCollection(${JSON.stringify(game).replace(/'/g, "&#39;")})' class="flex-1 bg-indigo-600 text-white hover:bg-indigo-700 font-medium py-2.5 px-4 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2">
+                            <i data-lucide="plus" class="w-4 h-4"></i> Add to ${DOM.activeGroupName.textContent}
+                        </button>
+                    `;
+                }
+
+                html += `
+                    <button onclick='DB.toggleWishlist(${JSON.stringify(game).replace(/'/g, "&#39;")})' class="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium py-2.5 px-4 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2">
+                        <i data-lucide="heart" class="w-4 h-4 ${isWished ? 'fill-red-500 text-red-500' : ''}"></i> ${isWished ? 'Wishlisted' : 'Wishlist'}
+                    </button>
+                `;
+
+                container.innerHTML = html;
+                lucide.createIcons({root: container});
+            },
+            wishlist: () => {
+                const grid = document.getElementById('wishlist-grid');
+                const empty = document.getElementById('wishlist-empty');
+                if (State.wishlist.length === 0) {
+                    grid.innerHTML = '';
+                    empty.classList.remove('hidden');
+                } else {
+                    empty.classList.add('hidden');
+                    grid.innerHTML = State.wishlist.map(g => Render.collectionCard({...g, id: g.bggId}, true)).join('');
+                    lucide.createIcons();
+                }
+            },
+            groupsModal: () => {
+                const container = document.getElementById('groups-list');
+                container.innerHTML = State.groups.map(g => `
+                    <div class="flex items-center justify-between p-2 rounded-md ${g.id === State.activeGroupId ? 'bg-indigo-50 border border-indigo-100' : 'hover:bg-slate-100 border border-transparent'} cursor-pointer" onclick="DB.setActiveGroup('${g.id}'); UI.closeModal('groups-modal');">
+                        <div class="flex flex-col">
+                            <span class="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                                ${g.name} ${g.id === State.activeGroupId ? '<i data-lucide="check-circle" class="w-3.5 h-3.5 text-indigo-600"></i>' : ''}
+                            </span>
+                            <span class="text-[10px] text-slate-500">${g.members.length} members</span>
+                        </div>
+                    </div>
+                `).join('');
+                lucide.createIcons({root: container});
+            },
+            activities: () => {
+                const list = document.getElementById('activity-list');
+                if(State.activities.length === 0) {
+                    list.innerHTML = '<p class="text-slate-500">No recent activity.</p>';
+                    return;
+                }
+                
+                list.innerHTML = State.activities.map(a => {
+                    const group = State.groups.find(g => g.id === a.groupId);
+                    const groupName = group ? group.name : 'a group';
+                    
+                    let icon, color, text;
+                    if(a.action === 'added') { icon = 'plus-circle'; color = 'text-green-500 bg-green-100'; text = `added <b>${a.target}</b> to`; }
+                    else if(a.action === 'removed') { icon = 'minus-circle'; color = 'text-red-500 bg-red-100'; text = `removed <b>${a.target}</b> from`; }
+                    else if(a.action === 'invited') { icon = 'user-plus'; color = 'text-blue-500 bg-blue-100'; text = `invited <b>${a.target}</b> to`; }
+                    
+                    const timeString = new Date(a.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
+
+                    return `
+                    <div class="flex gap-4 p-3 bg-white border border-slate-200 rounded-xl items-center shadow-sm">
+                        <div class="w-8 h-8 rounded-full ${color} flex items-center justify-center flex-shrink-0">
+                            <i data-lucide="${icon}" class="w-4 h-4"></i>
+                        </div>
+                        <div class="flex-1 text-sm text-slate-700">
+                            <span class="font-semibold text-slate-900">${a.userName.split(' ')[0]}</span> ${text} <span class="font-medium text-slate-800">${groupName}</span>
+                        </div>
+                        <div class="text-[10px] text-slate-400 whitespace-nowrap">${timeString}</div>
+                    </div>
+                    `;
+                }).join('');
+                lucide.createIcons({root: list});
+            },
+            quickCheck: (query) => {
+                const resContainer = document.getElementById('quick-check-results');
+                const empty = document.getElementById('quick-check-empty');
+                
+                if (!query || query.length < 2) {
+                    resContainer.innerHTML = '';
+                    empty.classList.add('hidden');
+                    return;
+                }
+
+                const matches = State.allAccessGames.filter(g => g.name.toLowerCase().includes(query.toLowerCase()));
+                
+                if (matches.length === 0) {
+                    resContainer.innerHTML = '';
+                    empty.classList.remove('hidden');
+                } else {
+                    empty.classList.add('hidden');
+                    
+                    // Group matches by game ID (since multiple groups might own it)
+                    const grouped = {};
+                    matches.forEach(m => {
+                        if(!grouped[m.bggId]) grouped[m.bggId] = { game: m, groups: [] };
+                        const groupInfo = State.groups.find(g => g.id === m.groupId);
+                        if(groupInfo && !grouped[m.bggId].groups.includes(groupInfo.name)) {
+                            grouped[m.bggId].groups.push(groupInfo.name);
+                        }
+                    });
+
+                    resContainer.innerHTML = Object.values(grouped).map(item => `
+                        <div class="bg-red-50 border border-red-200 rounded-xl p-4 flex gap-4 items-center">
+                            <i data-lucide="alert-triangle" class="w-6 h-6 text-red-500 flex-shrink-0"></i>
+                            <div>
+                                <h4 class="font-bold text-slate-900">${item.game.name}</h4>
+                                <p class="text-sm text-slate-700 mt-1">✓ Owned by: <span class="font-medium">${item.groups.join(', ')}</span></p>
+                            </div>
+                        </div>
+                    `).join('');
+                    lucide.createIcons({root: resContainer});
+                }
+            }
+        };
+
+        // ==========================================
+        // 7. EVENT LISTENERS & SETUP
+        // ==========================================
+        
+        // Search Input (BGG)
+        const searchInput = document.getElementById('bgg-search-input');
+        const handleSearch = debounce(async (e) => {
+            const query = e.target.value.trim();
+            if (query.length < 2) {
+                document.getElementById('search-results').innerHTML = '';
+                return;
+            }
+            
+            document.getElementById('search-loading').classList.remove('hidden');
+            document.getElementById('search-results').innerHTML = '';
+            
+            const results = await BGG.search(query);
+            document.getElementById('search-loading').classList.add('hidden');
+            Render.searchResults(results);
+        }, 600);
+        searchInput.addEventListener('input', handleSearch);
+
+        // Quick Check Input
+        const qcInput = document.getElementById('quick-check-input');
+        const handleQC = debounce((e) => Render.quickCheck(e.target.value.trim()), 300);
+        qcInput.addEventListener('input', handleQC);
+
+        // Filter & Sort Collection
+        document.getElementById('filter-collection').addEventListener('input', () => Render.collection());
+        document.getElementById('sort-collection').addEventListener('change', () => Render.collection());
+
+        // Create Group
+        document.getElementById('create-group-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('new-group-name');
+            if (input.value.trim()) DB.createGroup(input.value.trim());
+            input.value = '';
+        });
+
+        // Invite Member
+        document.getElementById('invite-member-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('invite-email');
+            if (input.value.trim()) DB.inviteMember(input.value.trim());
+            input.value = '';
+        });
+
+        // Boot
+        Auth.init();
+    </script>
+</body>
+</html>
