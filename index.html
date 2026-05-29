@@ -834,7 +834,7 @@
             search: async (query) => {
                 try {
                     // Step 1: Search API (Gets IDs)
-                    const res = await fetch(`https://api.allorigins.win/raw?url=https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`);
+                    const res = await fetch(`https://corsproxy.io/?url=https://boardgamegeek.com/xmlapi2/search?query=${encodeURIComponent(query)}&type=boardgame`);
                     const text = await res.text();
                     const parser = new DOMParser();
                     const xml = parser.parseFromString(text, 'text/xml');
@@ -845,7 +845,7 @@
                     const ids = items.map(item => item.getAttribute('id')).join(',');
 
                     // Step 2: Thing API (Gets Images and Stats)
-                    const detailsRes = await fetch(`https://api.allorigins.win/raw?url=https://boardgamegeek.com/xmlapi2/thing?id=${ids}`);
+                    const detailsRes = await fetch(`https://corsproxy.io/?url=https://boardgamegeek.com/xmlapi2/thing?id=${ids}`);
                     const detailsText = await detailsRes.text();
                     const detailsXml = parser.parseFromString(detailsText, 'text/xml');
                     const detailItems = Array.from(detailsXml.querySelectorAll('item'));
